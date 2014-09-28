@@ -39,8 +39,8 @@ rc4_buff_size
 
     location /demo {
         set $key1 '123';
-	set $key2 '456';
+        set $key2 '456';
         content_by_lua ' ngx.say("Hello world.")';
-	rc4_body on;
-	rc4_key $key1$key2;
+        rc4_body on;
+        rc4_key $key1$key2;
     }
