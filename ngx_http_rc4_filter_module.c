@@ -23,17 +23,19 @@ static void rc4(RC4_KEY *key, ngx_buf_t *buf, ngx_buf_t *tbuf, size_t tsize)
 {
 	size_t len = 0;
 	int p = 0;
-
+	
 	size_t bsize = ngx_buf_size(buf);
 	if (bsize <= 0) {
 		return;
 	}
 
-	while (buf->pos + p < buf->last) {
+	u_char *pbuf = buf->pos;
+
+	while (pbuf + p < buf->last) {
 		len = (bsize > tsize) ? tsize : bsize;
 
-		RC4(key, len, buf->pos + p, tbuf->pos);
-		ngx_memcpy(buf->pos + p, tbuf->pos, len);
+		RC4(key, len, pbuf + p, tbuf->pos);
+		ngx_memcpy(pbuf + p, tbuf->pos, len);
 
 		bsize -= len;
 		p += len;
@@ -48,33 +50,29 @@ static ngx_int_t ngx_http_rc4_header_filter(ngx_http_request_t *r)
 	conf = ngx_http_get_module_loc_conf(r, ngx_http_rc4_filter_module);
 
 	if (r != r->main || r->headers_out.status != NGX_HTTP_OK || r->header_only
-	    || conf->enable == 0
-	    || NULL == conf->rc4_key_str)
+	    || conf->enable == 0)
 	{
 		return ngx_http_next_header_filter(r);
-	}
-
-	if (NULL == conf->rc4_key_str->value.data) {
-		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "rc4_key must not be NULL");
-		conf->enable = 0;
-		return NGX_ERROR;
 	}
 
 	ctx = ngx_http_get_module_ctx(r, ngx_http_rc4_filter_module);
 	if (ctx == NULL) {
 		ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_rc4_filter_ctx_t));
 		if (ctx == NULL) {
+			ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "pcalloc rc4_ctx error");
 			return NGX_ERROR;
 		}
-
-		ngx_http_set_ctx(r, ctx, ngx_http_rc4_filter_module);
 
 		ctx->rc4_key = (RC4_KEY *)ngx_pcalloc(r->pool, sizeof(RC4_KEY));
 		if (NULL == ctx->rc4_key) {
 			return NGX_ERROR;
 		}
 		RC4_set_key(ctx->rc4_key, conf->rc4_key_str->value.len, conf->rc4_key_str->value.data);
+
+		ngx_http_set_ctx(r, ctx, ngx_http_rc4_filter_module);
 	}
+
+	r->filter_need_in_memory = 1;
 
 	return ngx_http_next_header_filter(r);
 }
@@ -83,29 +81,30 @@ static ngx_int_t ngx_http_rc4_body_filter(ngx_http_request_t *r, ngx_chain_t *in
 {
 	ngx_chain_t                *cl;
 	ngx_http_rc4_filter_conf_t *conf;
-	ngx_http_rc4_filter_ctx_t *ctx;
+	ngx_http_rc4_filter_ctx_t  *ctx;
 
 	conf = ngx_http_get_module_loc_conf(r, ngx_http_rc4_filter_module);
-	if (conf->enable == 0) {
-		return ngx_http_next_header_filter(r);
-	}
-
-	ctx = ngx_http_get_module_ctx(r, ngx_http_rc4_filter_module);
-	if (ctx == NULL || r->header_only) {
+	if (in == NULL
+	    || conf->enable == 0
+	    || r != r->main || r->headers_out.status != NGX_HTTP_OK || r->header_only)
+	{
 		return ngx_http_next_body_filter(r, in);
 	}
 
-	if (NULL == ctx->buff) {
+	ctx = ngx_http_get_module_ctx(r, ngx_http_rc4_filter_module);
+	if (ctx->buff == NULL) {
 		ctx->buff = ngx_create_temp_buf(r->pool, conf->buff_size);
 		if (NULL == ctx->buff) {
+			ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "pcalloc rc4 buff error");
 			return NGX_ERROR;
 		}
 	}
-
+	
 	for (cl = in; cl; cl = cl->next) {
-		rc4(ctx->rc4_key, in->buf, ctx->buff, conf->buff_size);
+		cl->buf->in_file = 0;
+		rc4(ctx->rc4_key, cl->buf, ctx->buff, conf->buff_size);	
 	}
-
+	
 	return ngx_http_next_body_filter(r, in);
 }
 
@@ -116,7 +115,7 @@ static char *ngx_http_rc4_filter_merge_conf(ngx_conf_t *cf, void *parent, void *
 	ngx_http_rc4_filter_conf_t *conf = child;
 
 	ngx_conf_merge_value(conf->enable, prev->enable, 0);
-	ngx_conf_merge_size_value(conf->buff_size, prev->buff_size, 512);
+	ngx_conf_merge_size_value(conf->buff_size, prev->buff_size, 4096);
 
 	if (conf->rc4_key_str == NULL) {
 		conf->rc4_key_str = prev->rc4_key_str;
@@ -144,7 +143,7 @@ static ngx_int_t ngx_http_rc4_filter_init(ngx_conf_t *cf)
 {
 	ngx_http_next_header_filter = ngx_http_top_header_filter;
 	ngx_http_top_header_filter = ngx_http_rc4_header_filter;
-
+	
 	ngx_http_next_body_filter = ngx_http_top_body_filter;
 	ngx_http_top_body_filter = ngx_http_rc4_body_filter;
 
@@ -170,7 +169,7 @@ static ngx_command_t  ngx_http_rc4_commands[] = {
 	  ngx_conf_set_size_slot,
 	  NGX_HTTP_LOC_CONF_OFFSET,
 	  offsetof(ngx_http_rc4_filter_conf_t, buff_size),
-      NULL },
+	  NULL },
 
 	ngx_null_command
 };

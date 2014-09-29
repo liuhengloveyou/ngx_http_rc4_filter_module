@@ -27,7 +27,7 @@ RC4密码,可以使用变量
 rc4_buff_size
 -------------
 
-**syntax:** *rc4_buff_size &lt;$size&gt;*
+**syntax:** *rc4_buff_size &lt;size&gt;*
 
 **context:** *http, server, location*
 
