@@ -31,7 +31,7 @@ rc4_buff_size
 
 **context:** *http, server, location*
 
-用于加密过程的随时缓冲区大小, 默认512字节
+用于加密过程的随时缓冲区大小, 默认4096字节
 
 
 配置示例
